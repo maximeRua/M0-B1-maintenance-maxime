@@ -174,19 +174,84 @@ tests/test_predict.py::test_predict_tous_types_machine[four] PASSED      [100%]
 ============================= 13 passed in 10.98s =============================
 ```
 
-**2. Service dans le conteneur - `curl /health`**
+**2. Logging Loguru - fichier `logs/api.log` (livrable 4)**
+
+Le fichier est créé automatiquement au premier lancement de l'API. Le dossier
+`logs/` est ignoré par git (les logs ne se versionnent pas) : il n'apparaît donc
+pas sur GitHub, mais il est généré dès qu'on lance l'API ou les tests.
 
 ```text
-$ curl http://localhost:8000/health
-{"status":"ok","model_loaded":true}
+$ ls -l logs
+-rw-r--r-- 1 mrua 1049089 8289 Nov 24 15:23 api.log
+
+$ tail -n 5 logs/api.log
+2026-11-24 15:23:51.719 | INFO     | app.main:predict:136 - Requête /predict reçue : {'type_machine': 'presse', 'age_machine_jours': 1500, 'derniere_maintenance_jours': 45, 'temperature_moyenne': 68.5, 'vibration_moyenne': 3.2, 'pression_moyenne': 7.8, 'nb_incidents_3_mois': 2}
+2026-11-24 15:23:51.822 | INFO     | app.main:predict:154 - Prédiction = basse | probabilités = {'basse': 0.975, 'haute': 0.0, 'moyenne': 0.025} (durée 103.1 ms)
+2026-11-24 15:23:51.827 | INFO     | app.main:predict:136 - Requête /predict reçue : {'type_machine': 'four', 'age_machine_jours': 1500, 'derniere_maintenance_jours': 45, 'temperature_moyenne': 68.5, 'vibration_moyenne': 3.2, 'pression_moyenne': 7.8, 'nb_incidents_3_mois': 2}
+2026-11-24 15:23:51.925 | INFO     | app.main:predict:154 - Prédiction = basse | probabilités = {'basse': 0.96, 'haute': 0.0, 'moyenne': 0.04} (durée 98.0 ms)
+2026-11-24 15:23:51.932 | INFO     | app.main:lifespan:80 - Service arrêté, état libéré.
 ```
 
-**3. Image construite - `docker images`**
+**3. Docker - build de l'image (livrable 5)**
+
+Extrait de la sortie : une ligne par étape, les détails de `pip install` sont omis.
+
+```text
+$ docker build --no-cache --progress=plain -t fastia-maintenance:dev .
+#1 [internal] load build definition from Dockerfile
+#2 [internal] load metadata for docker.io/library/python:3.11-slim
+#3 [internal] load .dockerignore
+#4 [internal] load build context
+#5 [1/6] FROM docker.io/library/python:3.11-slim@sha256:61e01f72680f86a5279ad510818ab7b2ee9f049822589d4e34e33e044360356c
+#6 [2/6] WORKDIR /app
+#7 [3/6] COPY requirements.txt .
+#8 [4/6] RUN pip install --no-cache-dir -r requirements.txt
+#8 DONE 30.0s
+#9 [5/6] COPY app/ ./app/
+#10 [6/6] COPY model/ ./model/
+#11 exporting to image
+#11 naming to docker.io/library/fastia-maintenance:dev done
+#11 DONE 17.8s
+```
+
+**4. Docker - run et `curl` depuis l'hôte (livrable 5)**
+
+Le port 8000 de ma machine était déjà occupé par un autre conteneur : j'ai donc
+publié le service sur le port **8001** de l'hôte (`-p 8001:8000`). Le service
+écoute toujours sur le port 8000 *dans* le conteneur.
+
+```text
+$ docker run -d --rm --name fastia-proof -p 8001:8000 fastia-maintenance:dev
+
+$ docker logs fastia-proof
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+2026-11-24 14:25:43.306 | INFO     | app.main:lifespan:72 - Chargement du modèle depuis /app/model/model.joblib
+2026-11-24 14:25:44.441 | INFO     | app.main:lifespan:75 - Modèle chargé.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+
+$ curl http://localhost:8001/health
+{"status":"ok","model_loaded":true}
+
+$ curl -X POST http://localhost:8001/predict -H "Content-Type: application/json" -d '{"type_machine":"pompe","age_machine_jours":1200,"derniere_maintenance_jours":90,"temperature_moyenne":85.0,"vibration_moyenne":4.2,"pression_moyenne":6.5,"nb_incidents_3_mois":1}'
+{"criticite":"moyenne","probabilites":{"basse":0.465,"haute":0.045,"moyenne":0.49}}
+
+$ docker logs fastia-proof   # lignes ajoutées par la requête /predict
+2026-11-24 14:25:46.478 | INFO     | app.main:predict:136 - Requête /predict reçue : {'type_machine': 'pompe', 'age_machine_jours': 1200, 'derniere_maintenance_jours': 90, [...]}
+2026-11-24 14:25:46.582 | INFO     | app.main:predict:154 - Prédiction = moyenne | probabilités = {'basse': 0.465, 'haute': 0.045, 'moyenne': 0.49} (durée 103.5 ms)
+
+$ docker ps --filter name=fastia-proof
+NAMES          IMAGE                    PORTS                                         STATUS
+fastia-proof   fastia-maintenance:dev   0.0.0.0:8001->8000/tcp, [::]:8001->8000/tcp   Up 8 seconds (healthy)
+```
+
+**5. Docker - image construite**
 
 ```text
 $ docker images fastia-maintenance:dev
 IMAGE                    ID             DISK USAGE   CONTENT SIZE
-fastia-maintenance:dev   c68f18a8e2ae        775MB          176MB
+fastia-maintenance:dev   d8cf638d976d        775MB          176MB
 ```
 
 ## Régénérer dataset / modèle (optionnel)
