@@ -1,151 +1,215 @@
-# M0-B1 — Squelette repo (maintenance prédictive · API REST)
+# FastIA - Service de criticité en maintenance prédictive (M0-B1)
 
-> **Repo template GitHub.** Clique sur **« Use this template »** en haut à
-> droite de cette page → **Create a new repository** → nomme-le
-> `M0-B1-maintenance-<prenom>` sur **ton** compte GitHub personnel
-> (`<prenom>` : ton prénom en minuscules, sans accent). C'est ce nouveau repo que tu cloneras pour travailler.
+API REST (FastAPI) qui expose un modèle scikit-learn pré-entraîné : à partir des
+7 caractéristiques observables d'une machine industrielle, elle prédit sa
+**criticité** (`basse`, `moyenne` ou `haute`) et renvoie les probabilités
+associées
 
-Brief **M0-B1 « Intégrer un service IA de maintenance prédictive via API REST »**
-— **individuel**, 5 h.
-L'énoncé complet est publié sur **Simplonline** : c'est lui qui fait foi pour
-les livrables et les critères. Ce README est ton tableau de bord au quotidien.
+| Route | Rôle |
+|---|---|
+| `GET /health` | Santé du service et du modèle (`{"status": "ok", "model_loaded": true}`) |
+| `POST /predict` | Prédiction de criticité : classe + probabilités |
+| `POST /notes`, `GET /notes/{idx}` | Routes d'exemple issues du mini-cours FastAPI (stockage en mémoire, hors périmètre du service) |
+| `GET /docs` | Documentation interactive Swagger (générée automatiquement) |
 
 ---
 
-## 🚀 Démarrage (4 étapes)
+## Lancer le service en 5 minutes
+
+**Prérequis :** Python 3.11+ (testé en 3.13) et `git`. Docker est nécessaire
+uniquement pour la section [Docker](#-docker)
+
+### 1. Récupérer le code et installer les dépendances
 
 ```bash
-# 0. Clone ton repo perso fraîchement créé
-git clone git@github.com:<ton-user>/M0-B1-maintenance-<prenom>.git
-# (sans clé SSH : git clone https://github.com/<ton-user>/M0-B1-maintenance-<prenom>.git)
-cd M0-B1-maintenance-<prenom>
+git clone https://github.com/maximeRua/M0-B1-maintenance-Maxime.git
+cd M0-B1-maintenance-Maxime
 
-# 1. Environnement virtuel + dépendances
-python -m venv .venv && source .venv/bin/activate     # Linux/macOS
-# .venv\Scripts\activate                              # Windows
+# Linux / macOS
+python -m venv .venv && source .venv/bin/activate
+# Windows (PowerShell)
+#   python -m venv .venv ; .venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
+```
 
-# 2. Lancer l'API (rechargement auto) — dans un premier terminal
+### 2. Démarrer l'API
+
+```bash
 uvicorn app.main:app --reload
-
-# 3. Lancer les tests — dans un second terminal (réactive d'abord l'environnement)
-source .venv/bin/activate
-pytest
 ```
 
-À l'étape 2, ouvre <http://localhost:8000/docs> (Swagger auto). L'endpoint
-`/health` doit déjà répondre `{"status": "ok", "model_loaded": true}`.
-Si ces commandes marchent, ton poste est prêt.
+L'API écoute sur <http://localhost:8000>. Le modèle (`model/model.joblib`, déjà
+fourni) est chargé une seule fois au démarrage. Ouvre
+<http://localhost:8000/docs> pour tester les routes depuis le navigateur.
+
+### 3. Vérifier que ça répond
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok","model_loaded":true}
+```
+
+> Le port 8000 est déjà pris ? Lance `uvicorn app.main:app --reload --port 8001`.
 
 ---
 
-## 📁 Structure du repo
+## Utiliser l'API
 
-```
-M0-B1-maintenance-<prenom>/
-├── app/
-│   ├── __init__.py
-│   ├── main.py             ← FastAPI : /health (✅) + /predict (à compléter)
-│   └── schemas.py          ← Pydantic : MachineInput, PredictionResponse
-├── data/
-│   ├── generate_dataset.py ← régénération du dataset (déjà exécuté)
-│   └── maintenance_data.csv ← dataset synthétique 6 500 lignes
-├── model/
-│   ├── train_baseline.py   ← entraînement (déjà exécuté)
-│   └── model.joblib        ← modèle pré-entraîné ~5,7 Mo (chargé au démarrage)
-├── tests/
-│   ├── __init__.py
-│   └── test_health.py      ← test pytest fonctionnel au clone (✅)
-├── ressources/             ← 📚 mini-cours d'appui (lecture juste-à-temps)
-│   ├── 01_FastAPI_essentiel.md
-│   ├── 02_Docker_essentiel.md
-│   ├── 03_Loguru_essentiel.md
-│   ├── 04_Pytest_API_essentiel.md
-│   ├── liens_officiels.md
-│   └── README.md           ← ordre de mobilisation + objectifs
-├── Dockerfile              ← squelette commenté à compléter
-├── requirements.txt        ← dépendances figées
-├── .gitignore
-└── README.md (ce fichier — à compléter avec ta doc de service)
+### `POST /predict`
+
+**Corps de la requête** (JSON) - les 7 champs sont obligatoires :
+
+| Champ | Type | Contrainte |
+|---|---|---|
+| `type_machine` | texte | `pompe`, `compresseur`, `convoyeur`, `presse` ou `four` |
+| `age_machine_jours` | entier | 0 à 10 000 |
+| `derniere_maintenance_jours` | entier | 0 à 365 |
+| `temperature_moyenne` | nombre | °C (moyenne 7 derniers jours) |
+| `vibration_moyenne` | nombre | ≥ 0, mm/s |
+| `pression_moyenne` | nombre | ≥ 0, bar |
+| `nb_incidents_3_mois` | entier | ≥ 0 |
+
+**Exemple (curl, Linux/macOS/Git Bash) :**
+
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"type_machine":"pompe","age_machine_jours":1200,"derniere_maintenance_jours":90,"temperature_moyenne":85.0,"vibration_moyenne":4.2,"pression_moyenne":6.5,"nb_incidents_3_mois":1}'
 ```
 
----
+**Exemple (PowerShell) :**
 
-## ✏️ Ce que tu dois compléter
+```powershell
+$body = @{
+  type_machine = "pompe"; age_machine_jours = 1200; derniere_maintenance_jours = 90
+  temperature_moyenne = 85.0; vibration_moyenne = 4.2; pression_moyenne = 6.5
+  nb_incidents_3_mois = 1
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict -ContentType "application/json" -Body $body
+```
 
-| Fichier | Tâche |
+**Réponse `200 OK` :**
+
+```json
+{
+  "criticite": "moyenne",
+  "probabilites": {"basse": 0.465, "haute": 0.045, "moyenne": 0.49}
+}
+```
+
+**Codes d'erreur :**
+
+| Code | Cause |
 |---|---|
-| `app/main.py` | Implémenter l'endpoint **POST `/predict`** (TODO marqué dans le code) |
-| `app/main.py` | Ajouter du **logging Loguru** sur chaque requête (entrée, sortie, durée) |
-| `tests/` | Ajouter **≥ 3 tests** pour `/predict` (cas valide, erreur 422, test paramétré sur les 5 types de machine) |
-| `Dockerfile` | Compléter le squelette commenté (image qui build) |
-| `README.md` | Documenter le lancement du service (un dev externe en 5 min) |
+| `422` | Entrée invalide (champ manquant, type inconnu, valeur hors bornes) - le détail désigne le champ fautif |
+| `503` | Modèle non chargé |
+| `500` | Erreur pendant l'inférence (détails dans les logs) |
 
 ---
 
-## 🧭 Démarche attendue (ordre suggéré)
+## Tests
 
-| # | Étape | Mini-cours | Durée |
-|---|---|---|---|
-| 1 | Prise en main du squelette (clone + install + run) | — | 30 min |
-| 2 | Analyse de l'existant (`main.py`, `schemas.py`, `train_baseline.py`) | — | 30 min |
-| 3 | Implémenter `/predict` | [`01_FastAPI_essentiel.md`](./ressources/01_FastAPI_essentiel.md) | 1 h 30 |
-| 4 | Logging Loguru | [`03_Loguru_essentiel.md`](./ressources/03_Loguru_essentiel.md) | 30 min |
-| 5 | Tests pytest `/predict` | [`04_Pytest_API_essentiel.md`](./ressources/04_Pytest_API_essentiel.md) | 45 min |
-| 6 | Conteneurisation Docker | [`02_Docker_essentiel.md`](./ressources/02_Docker_essentiel.md) | 45 min |
-| 7 | README (colle-y les 3 preuves : `pytest -v`, `curl /health`, `docker images`) + push final + lien du repo déposé sur Simplonline | — | 30 min |
+```bash
+pytest -v
+```
 
-Cf. [`./ressources/README.md`](./ressources/README.md) pour le détail. Les
-mini-cours se lisent **au moment où tu en as besoin** (~15 min chacun).
+13 tests : `/health` (2) et `/predict` (11 : cas valide, type de machine
+invalide, champ manquant, 3 valeurs hors bornes, un test par type de machine).
+Les tests n'ont pas besoin que le serveur tourne : `TestClient` simule les
+requêtes en mémoire.
 
 ---
 
-## 🎯 Ce qui compte vraiment
+## Docker
 
-1. **Une API qui tourne**, pas une API parfaite. Un `/predict` simple qui
-   fonctionne vaut mieux qu'une archi sur-engineered qui plante.
-2. **Des tests qui passent** : ≥ 3 tests pour `/predict` en PASSED.
-3. **Un README** qui permet à un collègue de lancer le service en 5 minutes.
-4. **Un Dockerfile qui build** et une image qui répond sur `/health`.
+```bash
+docker build -t fastia-maintenance:dev .
+docker run --rm -p 8000:8000 fastia-maintenance:dev
+# dans un autre terminal :
+curl http://localhost:8000/health
+```
 
-→ Compétence visée : **C6 — imiter** (intégrer un modèle livré dans un service API).
+L'image (`python:3.11-slim`) embarque `app/` et `model/`. Le `.dockerignore`
+exclut `.venv`, `tests`, `data`, etc. Un `HEALTHCHECK` interroge `/health` toutes
+les 30 s (`docker ps` affiche `healthy` une fois le modèle chargé).
 
 ---
 
-## 🔁 Régénérer dataset / modèle (optionnel)
+## Logs
 
-Le dataset et le modèle sont déjà fournis — **pas besoin** de les régénérer.
-Si tu veux le faire (déterministe, `random_state=42`) :
+Chaque requête `/predict` est tracée avec **Loguru** : entrée reçue, classe
+prédite, probabilités et durée d'inférence en ms. Les logs vont dans la console
+et dans `logs/api.log` (créé automatiquement, ignoré par git), avec rotation à
+5 Mo, conservation 7 jours et compression zip.
+
+```text
+2026-11-24 09:26:18.610 | INFO     | app.main:predict:136 - Requête /predict reçue : {'type_machine': 'presse', 'age_machine_jours': 1500, ...}
+2026-11-24 09:26:18.680 | INFO     | app.main:predict:154 - Prédiction = basse | probabilités = {'basse': 0.975, 'haute': 0.0, 'moyenne': 0.025} (durée 70.3 ms)
+```
+
+---
+
+## Preuves de fonctionnement
+
+Sorties réelles relevées le 24/11/2026.
+
+**1. Tests - `pytest -v`**
+
+```text
+tests/test_health.py::test_health_returns_200 PASSED                     [  7%]
+tests/test_health.py::test_health_response_schema PASSED                 [ 15%]
+tests/test_predict.py::test_predict_cas_valide PASSED                    [ 23%]
+tests/test_predict.py::test_predict_type_machine_invalide PASSED         [ 30%]
+tests/test_predict.py::test_predict_champ_manquant PASSED                [ 38%]
+tests/test_predict.py::test_predict_valeur_hors_bornes[age_machine_jours--1] PASSED [ 46%]
+tests/test_predict.py::test_predict_valeur_hors_bornes[derniere_maintenance_jours-366] PASSED [ 53%]
+tests/test_predict.py::test_predict_valeur_hors_bornes[vibration_moyenne--0.5] PASSED [ 61%]
+tests/test_predict.py::test_predict_tous_types_machine[pompe] PASSED     [ 69%]
+tests/test_predict.py::test_predict_tous_types_machine[compresseur] PASSED [ 76%]
+tests/test_predict.py::test_predict_tous_types_machine[convoyeur] PASSED [ 84%]
+tests/test_predict.py::test_predict_tous_types_machine[presse] PASSED    [ 92%]
+tests/test_predict.py::test_predict_tous_types_machine[four] PASSED      [100%]
+
+============================= 13 passed in 10.98s =============================
+```
+
+**2. Service dans le conteneur - `curl /health`**
+
+```text
+$ curl http://localhost:8000/health
+{"status":"ok","model_loaded":true}
+```
+
+**3. Image construite - `docker images`**
+
+```text
+$ docker images fastia-maintenance:dev
+IMAGE                    ID             DISK USAGE   CONTENT SIZE
+fastia-maintenance:dev   c68f18a8e2ae        775MB          176MB
+```
+
+## Régénérer dataset / modèle (optionnel)
+
+Le dataset et le modèle sont déjà fournis. Pour les régénérer (déterministe,
+`random_state=42`) :
 
 ```bash
 python data/generate_dataset.py     # régénère le CSV
 python model/train_baseline.py      # réentraîne le modèle (~30 s)
 ```
 
----
+> `scikit-learn` doit rester à la version qui a produit `model.joblib`
+> (cf. `requirements.txt`) ; en cas de changement de version, réentraîne.
 
-## ✅ Conventions de code
 
-- Python 3.11+
-- Type hints sur toutes les signatures publiques
-- Pas de `print` — utiliser **Loguru**
-- `pathlib.Path` pour les chemins (pas de `os.path`)
-- `random_state=42` partout où il y a de l'aléa
-
----
-
-## 🆘 Bloqué·e ?
+## Erreurs rencontrés durant le brief
 
 | Symptôme | Cause probable | Solution |
 |---|---|---|
-| `ModuleNotFoundError` au lancement | env virtuel pas activé / deps absentes | `source .venv/bin/activate` puis `pip install -r requirements.txt` |
-| `Modèle introuvable` au démarrage uvicorn | `model.joblib` absent ou mal placé | `python model/train_baseline.py` |
-| `pytest` échoue au clone | env virtuel actif ? deps installées ? | idem ligne 1 |
-| Port 8000 déjà utilisé | un autre service tourne dessus | `uvicorn app.main:app --reload --port 8001` |
-
-1. Relis l'**exercice guidé** du mini-cours concerné (chacun a sa solution).
-2. Ouvre **Swagger** (`/docs`) pour débugger une route sans curl.
-3. Lis les **logs Loguru** dans la console pour repérer les exceptions.
-4. **Demande de l'aide**, à l'oral ou par écrit dans le fil Discord du brief :
-   les deux se valent. N'attends pas 30 min sur le même problème. Par écrit,
-   colle la commande lancée et le message d'erreur complet.
+| `ModuleNotFoundError` au lancement | env virtuel pas activé / deps absentes | activer `.venv` puis `pip install -r requirements.txt` |
+| `Modèle introuvable` au démarrage | `model.joblib` absent ou mal placé | `python model/train_baseline.py` |
+| `/health` répond `degraded`, `/predict` répond 503 | modèle non chargé | vérifier les logs de démarrage |
+| `pytest` échoue au clone | env virtuel inactif ou deps absentes | idem ligne 1 |
+| Port 8000 déjà utilisé | un autre service tourne dessus | `uvicorn app.main:app --reload --port 8001` (.Net dans mon cas) |
+| `curl: Connection refused` avec Docker | `-p 8000:8000` oublié au `docker run` | relancer avec le mapping de port |
